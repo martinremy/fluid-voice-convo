@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Superpowers working artifacts (specs/plans are working docs, not repo content)
+docs/superpowers/

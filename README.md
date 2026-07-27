@@ -3,12 +3,13 @@
 A web interface for having fluent conversations with an LLM — low-latency voice
 in, streamed intelligence, streamed speech out.
 
-## Status: Phase 1 — WebRTC audio loopback
+## Status: Phase 2 — Streaming speech-to-text
 
-Phase 1 establishes the browser ↔ server audio transport. Speak into the mic and
-hear yourself back, proving the round-trip path that later phases fill with
-streaming speech-to-text, a generic intelligence layer, and streaming
-text-to-speech.
+Phase 1 established the browser ↔ server WebRTC audio transport. Phase 2 adds
+streaming speech-to-text: the browser's mic audio is transcribed live and
+partial/committed transcripts appear in the UI, powered by ElevenLabs Scribe v2
+Realtime behind a swappable `STTProvider` interface. Later phases add a generic
+intelligence layer and streamed text-to-speech.
 
 ### Prerequisites
 
@@ -17,7 +18,8 @@ text-to-speech.
 - [uv](https://docs.astral.sh/uv/) — Python package/project manager used
   throughout
 - Node.js 20+
-- Headphones (to avoid feedback during the loopback demo)
+- Headphones (recommended to avoid feedback while testing)
+- An ElevenLabs API key with Scribe v2 Realtime access (for the STT demo)
 
 ### Run the dev servers
 
@@ -34,8 +36,18 @@ uv run uvicorn app.main:app --reload
 cd web && npm install && npm run dev
 ```
 
-Open the URL Vite prints (e.g. `http://localhost:5173`), put on headphones,
-click **Start loopback**, and speak.
+Open the URL Vite prints (e.g. `http://localhost:5173`), click **Start**, and
+speak — partial transcripts appear dimmed and update live; committed turns
+append as new lines when you pause.
+
+### Run the STT demo (Phase 2)
+
+The live transcript requires an ElevenLabs API key.
+
+1. Copy `.env.example` to `.env` and set `ELEVENLABS_API_KEY`.
+2. Start both dev servers as above.
+3. Open the Vite URL, click **Start**, and speak — partial transcripts appear
+   dimmed and update live; committed turns append as new lines when you pause.
 
 > **Tip:** Run every Python command through `uv run ...` (e.g.
 > `uv run pytest`) so it resolves to the project's `.venv` regardless of
@@ -56,21 +68,20 @@ These run in CI on every push and pull request (see `.github/workflows/ci.yml`).
 
 ```
 Browser (vanilla TypeScript + Vite)
-  │  WebRTC (Opus audio, bidirectional)
+  │  WebRTC: audio up, transcript data channel down
   ▼
 FastAPI + aiortc
   ├─ /health        — liveness
-  └─ /offer         — WebRTC signaling; loops incoming audio back to the peer
+  └─ /offer         — WebRTC signaling; mic audio → STT → transcript events
 ```
 
-The browser does no AI logic: mic capture, WebRTC signaling, and audio playback
-only. The server owns the peer connection and relays frames. Single user,
-single session.
+The browser does no AI logic: mic capture, WebRTC signaling, and transcript
+display only. The server owns the peer connection, feeds audio frames to the
+`STTProvider`, and relays transcript events back over a `transcript` data
+channel. Single user, single session.
 
 ### Planned phases
 
-- **Phase 2:** streaming speech-to-text (ElevenLabs Scribe v2 Realtime) with a
-  live transcript in the browser.
 - **Phase 3:** a generic, swappable intelligence layer (stateful provider
   interface over an OpenAI-compatible streaming endpoint).
 - **Phase 4:** streaming text-to-speech (ElevenLabs) for the full voice loop.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -19,10 +20,12 @@ from elevenlabs.realtime.connection import (
 
 from app.config import ElevenLabsSTTSettings
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class TranscriptEvent:
-    kind: Literal["partial", "committed"]
+    kind: Literal["partial", "committed", "error"]
     text: str
 
 
@@ -89,6 +92,13 @@ class ElevenLabsSTTProvider:
             return TranscriptEvent(kind="partial", text=text)
         if kind_str == "committed_transcript" and text:
             return TranscriptEvent(kind="committed", text=text)
+        # Surface ElevenLabs error events instead of silently dropping them —
+        # otherwise an invalid key or rejected audio produces no signal at all.
+        if kind_str in ("input_error", "auth_error", "error") or (
+            kind_str and "error" in str(kind_str)
+        ):
+            reason = text or msg.get("reason") or msg.get("error") or str(msg)
+            return TranscriptEvent(kind="error", text=f"{kind_str}: {reason}")
         return None
 
     def _build_real_connection(self) -> RealtimeConnection:
@@ -137,8 +147,10 @@ class ElevenLabsRealtimeConnection:
         # and error events pass a dict. A None or non-dict payload means the
         # connection is closing — queue the sentinel so messages() returns.
         if isinstance(msg, dict):
+            logger.info("elevenlabs message: %s", msg.get("message_type"))
             self._incoming.put_nowait(msg)
         else:
+            logger.info("elevenlabs: close signal")
             self._incoming.put_nowait(self._CLOSE_SENTINEL)
 
     async def send_audio(self, audio: bytes) -> None:

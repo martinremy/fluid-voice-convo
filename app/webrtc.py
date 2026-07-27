@@ -6,6 +6,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+import av
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 from aiortc.mediastreams import MediaStreamError
 from fastapi import APIRouter
@@ -138,6 +139,10 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
         provider = ElevenLabsSTTProvider(settings=settings)
         logger.info("_run_stt: provider constructed, opening stream")
 
+        # Resample incoming frames to 16 kHz s16 mono — the format ElevenLabs
+        # Scribe v2 Realtime expects. Browser WebRTC Opus decodes at 48 kHz, so
+        # without resampling we'd send mis-labeled audio and get no transcripts.
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
         frame_count = 0
 
         async def audio_frames() -> AsyncIterator[bytes]:
@@ -148,12 +153,18 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
                 except MediaStreamError:
                     logger.info("_run_stt: track ended after %d frames", frame_count)
                     return
-                pcm = _frame_to_pcm(frame)
-                if pcm:
-                    frame_count += 1
-                    if frame_count == 1:
-                        logger.info("_run_stt: first audio frame received")
-                    yield pcm
+                if not isinstance(frame, av.AudioFrame):
+                    continue
+                for out_frame in resampler.resample(frame):
+                    pcm = bytes(out_frame.planes[0])
+                    if pcm:
+                        frame_count += 1
+                        if frame_count == 1:
+                            logger.info(
+                                "_run_stt: first audio frame (in=%dHz, out=16000Hz)",
+                                frame.sample_rate,
+                            )
+                        yield pcm
 
         event_count = 0
         async for event in provider.stream(audio_frames()):
@@ -195,11 +206,3 @@ def _send_closed(channel: Any) -> None:
 def _channel_open(channel: Any) -> bool:
     ready = getattr(channel, "readyState", None)
     return ready == "open"
-
-
-def _frame_to_pcm(frame: Any) -> bytes:
-    """Convert an aiortc AudioFrame to 16 kHz mono s16 PCM bytes."""
-    try:
-        return bytes(frame.planes[0])
-    except Exception:
-        return b""

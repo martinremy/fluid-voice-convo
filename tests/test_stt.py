@@ -84,10 +84,13 @@ async def test_provider_yields_partial_then_committed():
 
 
 @pytest.mark.asyncio
-async def test_provider_ignores_session_started_and_errors():
+async def test_provider_surfaces_error_events():
+    """Error events (input_error, auth_error, etc.) must be surfaced as
+    TranscriptEvent(kind="error") so the browser shows what went wrong, not
+    silently dropped."""
     messages = [
         {"message_type": "session_started"},
-        {"message_type": "input_error", "reason": "bad"},
+        {"message_type": "input_error", "reason": "bad audio"},
     ]
     fake = FakeRealtimeConnection(messages)
     provider = ElevenLabsSTTProvider(
@@ -97,7 +100,10 @@ async def test_provider_ignores_session_started_and_errors():
 
     events = [e async for e in provider.stream(async_iter([]))]
 
-    assert events == []
+    assert len(events) == 1
+    assert events[0].kind == "error"
+    assert "input_error" in events[0].text
+    assert "bad audio" in events[0].text
     assert fake.closed is True
 
 

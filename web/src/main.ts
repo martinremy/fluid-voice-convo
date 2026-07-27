@@ -16,6 +16,14 @@ function renderTranscriptEvent(kind: string, text: string): void {
     partialEl.textContent = "";
     return;
   }
+  if (kind === "error") {
+    partialEl.textContent = "";
+    const err = document.createElement("p");
+    err.className = "error";
+    err.textContent = `Error: ${text}`;
+    committedEl.appendChild(err);
+    return;
+  }
   if (kind === "partial") {
     partialEl.textContent = text;
     return;

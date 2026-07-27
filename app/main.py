@@ -1,10 +1,16 @@
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.webrtc import router as webrtc_router
+
+# Load .env from the project root so provider keys are available at runtime.
+# python-dotenv was already a declared dependency; calling it here is what makes
+# the .env file actually take effect.
+load_dotenv()
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
 

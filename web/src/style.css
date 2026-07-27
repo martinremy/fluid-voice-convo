@@ -36,3 +36,7 @@ button:disabled {
 #committed-turns p {
   margin: 0.3em 0;
 }
+#committed-turns .error {
+  color: #f66;
+  font-style: normal;
+}

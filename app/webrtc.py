@@ -120,25 +120,30 @@ async def offer(req: OfferRequest) -> OfferResponse:
 
 async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
     """Feed incoming audio frames to the STT provider and forward transcript
-    events to the browser over the data channel."""
-    settings = ElevenLabsSTTSettings(api_key=get_elevenlabs_api_key())
-    provider = ElevenLabsSTTProvider(settings=settings)
+    events to the browser over the data channel.
 
-    async def audio_frames() -> AsyncIterator[bytes]:
-        while True:
-            try:
-                frame = await track.recv()
-            except MediaStreamError:
-                return
-            pcm = _frame_to_pcm(frame)
-            if pcm:
-                yield pcm
-
+    Errors are surfaced to the browser as an `error` event (so the UI shows
+    what went wrong instead of silently hanging) AND logged server-side.
+    """
     try:
+        settings = ElevenLabsSTTSettings(api_key=get_elevenlabs_api_key())
+        provider = ElevenLabsSTTProvider(settings=settings)
+
+        async def audio_frames() -> AsyncIterator[bytes]:
+            while True:
+                try:
+                    frame = await track.recv()
+                except MediaStreamError:
+                    return
+                pcm = _frame_to_pcm(frame)
+                if pcm:
+                    yield pcm
+
         async for event in provider.stream(audio_frames()):
             _send_event(channel, event)
-    except Exception:
+    except Exception as exc:
         logger.exception("STT stream failed")
+        _send_error(channel, str(exc))
     finally:
         _send_closed(channel)
 
@@ -146,6 +151,11 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
 def _send_event(channel: Any, event: TranscriptEvent) -> None:
     if _channel_open(channel):
         channel.send(json.dumps({"kind": event.kind, "text": event.text}))
+
+
+def _send_error(channel: Any, message: str) -> None:
+    if _channel_open(channel):
+        channel.send(json.dumps({"kind": "error", "text": message}))
 
 
 def _send_closed(channel: Any) -> None:

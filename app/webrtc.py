@@ -45,17 +45,34 @@ async def offer(req: OfferRequest) -> OfferResponse:
     # The browser creates the 'transcript' data channel; the server receives it
     # via the datachannel event. (WebRTC forbids the answerer from adding new
     # m-lines, so the server cannot create the channel itself.)
-    channels: dict[str, Any] = {}
+    #
+    # The audio track event and the datachannel event fire independently; the
+    # data channel (SCTP) usually completes after the audio track is signaled.
+    # So we collect whichever arrives first and start STT only once both are
+    # present, avoiding a race where on("track") fires before the channel
+    # exists.
+    state: dict[str, Any] = {"audio_track": None, "channel": None, "started": False}
+
+    def maybe_start_stt() -> None:
+        if state["started"]:
+            return
+        track = state["audio_track"]
+        channel = state["channel"]
+        if track is not None and channel is not None:
+            state["started"] = True
+            asyncio.ensure_future(_run_stt(track, channel))
 
     @pc.on("datachannel")
     def on_datachannel(channel: Any) -> None:
-        channels[channel.label] = channel
+        if channel.label == "transcript":
+            state["channel"] = channel
+            maybe_start_stt()
 
     @pc.on("track")
     def on_track(track: MediaStreamTrack) -> None:
         if track.kind == "audio":
-            transcript_channel = channels.get("transcript")
-            asyncio.ensure_future(_run_stt(track, transcript_channel))
+            state["audio_track"] = track
+            maybe_start_stt()
 
     @pc.on("connectionstatechange")
     def on_state_change() -> None:
@@ -73,10 +90,6 @@ async def offer(req: OfferRequest) -> OfferResponse:
 async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
     """Feed incoming audio frames to the STT provider and forward transcript
     events to the browser over the data channel."""
-    if channel is None:
-        logger.warning("No 'transcript' data channel; audio will not be transcribed")
-        return
-
     settings = ElevenLabsSTTSettings(api_key=get_elevenlabs_api_key())
     provider = ElevenLabsSTTProvider(settings=settings)
 

@@ -37,6 +37,41 @@ class OfferResponse(BaseModel):
     type: str
 
 
+class STTStarter:
+    """Joins the audio-track and transcript-channel events so STT starts exactly
+    once, after both arrive — in either order.
+
+    Extracted from the `/offer` handler so the join logic is unit-testable
+    without a live WebRTC connection (the events otherwise only fire after
+    ICE/DTLS/SCTP establish between two real peers, which is out of CI scope).
+    """
+
+    def __init__(self) -> None:
+        self._track: MediaStreamTrack | None = None
+        self._channel: Any = None
+        self._started: bool = False
+        self.start_calls: list[tuple[MediaStreamTrack, Any]] = []
+
+    def set_track(self, track: MediaStreamTrack) -> None:
+        if self._track is not None:
+            return
+        self._track = track
+        self._maybe_start()
+
+    def set_channel(self, channel: Any) -> None:
+        if self._channel is not None:
+            return
+        self._channel = channel
+        self._maybe_start()
+
+    def _maybe_start(self) -> None:
+        if self._started:
+            return
+        if self._track is not None and self._channel is not None:
+            self._started = True
+            self.start_calls.append((self._track, self._channel))
+
+
 @router.post("/offer", response_model=OfferResponse)
 async def offer(req: OfferRequest) -> OfferResponse:
     pc = RTCPeerConnection()
@@ -49,30 +84,22 @@ async def offer(req: OfferRequest) -> OfferResponse:
     # The audio track event and the datachannel event fire independently; the
     # data channel (SCTP) usually completes after the audio track is signaled.
     # So we collect whichever arrives first and start STT only once both are
-    # present, avoiding a race where on("track") fires before the channel
-    # exists.
-    state: dict[str, Any] = {"audio_track": None, "channel": None, "started": False}
-
-    def maybe_start_stt() -> None:
-        if state["started"]:
-            return
-        track = state["audio_track"]
-        channel = state["channel"]
-        if track is not None and channel is not None:
-            state["started"] = True
-            asyncio.ensure_future(_run_stt(track, channel))
+    # The audio track event and the datachannel event fire independently; the
+    # data channel (SCTP) usually completes after the audio track is signaled.
+    # STTStarter joins them: it starts the STT task exactly once, only after
+    # both the audio track and the 'transcript' channel have arrived, in either
+    # order.
+    starter = STTStarter()
 
     @pc.on("datachannel")
     def on_datachannel(channel: Any) -> None:
         if channel.label == "transcript":
-            state["channel"] = channel
-            maybe_start_stt()
+            starter.set_channel(channel)
 
     @pc.on("track")
     def on_track(track: MediaStreamTrack) -> None:
         if track.kind == "audio":
-            state["audio_track"] = track
-            maybe_start_stt()
+            starter.set_track(track)
 
     @pc.on("connectionstatechange")
     def on_state_change() -> None:

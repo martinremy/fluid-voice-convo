@@ -14,9 +14,14 @@ from app.webrtc import router as webrtc_router
 load_dotenv()
 
 # Surface app-level INFO logs (event flow, STT diagnostics) under uvicorn.
-# Set on both the "app" namespace and explicitly on "app.webrtc" because
-# uvicorn's logging config can leave child loggers at WARNING otherwise.
-logging.getLogger("app").setLevel(logging.INFO)
+# uvicorn's logging config leaves the "app" logger with no handler, so INFO
+# calls silently vanish. Attach a StreamHandler explicitly so diagnostics
+# actually reach the console.
+_app_logger = logging.getLogger("app")
+_app_logger.setLevel(logging.INFO)
+if not _app_logger.handlers:
+    _app_logger.addHandler(logging.StreamHandler())
+_app_logger.propagate = False
 logging.getLogger("app.webrtc").setLevel(logging.INFO)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"

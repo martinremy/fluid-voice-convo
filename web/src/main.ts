@@ -68,6 +68,19 @@ async function startLoopback(): Promise<void> {
     if (pc) setStatus(`ICE: ${pc.iceConnectionState}`);
   };
 
+  // Log data channel state so we can see whether SCTP establishes. This is the
+  // layer that must come up before the server can send transcript events.
+  const logDcState = () =>
+    console.log(`[transcript channel] state=${transcriptChannel.readyState}`);
+  logDcState();
+  transcriptChannel.onopen = () => {
+    logDcState();
+    setStatus("Connected — speak (transcript appears below)");
+  };
+  transcriptChannel.onclose = logDcState;
+  transcriptChannel.onerror = (e) =>
+    console.log("[transcript channel] error", e);
+
   setStatus("Creating offer…");
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -86,7 +99,9 @@ async function startLoopback(): Promise<void> {
 
   const answer = await response.json();
   await pc.setRemoteDescription(answer);
-  setStatus("Connected — speak (transcript appears below)");
+  // Don't claim "Connected" here — ICE/SCTP may still be negotiating. The
+  // data channel's onopen handler sets the connected status once SCTP is up.
+  setStatus("Connecting…");
 }
 
 startButton.addEventListener("click", () => {

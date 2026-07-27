@@ -97,16 +97,23 @@ async def offer(req: OfferRequest) -> OfferResponse:
 
     @pc.on("datachannel")
     def on_datachannel(channel: Any) -> None:
+        logger.info(
+            "datachannel event: label=%s readyState=%s",
+            channel.label,
+            channel.readyState,
+        )
         if channel.label == "transcript":
             starter.set_channel(channel)
 
     @pc.on("track")
     def on_track(track: MediaStreamTrack) -> None:
+        logger.info("track event: kind=%s id=%s", track.kind, track.id)
         if track.kind == "audio":
             starter.set_track(track)
 
     @pc.on("connectionstatechange")
     def on_state_change() -> None:
+        logger.info("connectionstatechange: %s", pc.connectionState)
         if pc.connectionState in ("failed", "closed"):
             peer_connections.discard(pc)
             asyncio.ensure_future(pc.close())
@@ -125,22 +132,44 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
     Errors are surfaced to the browser as an `error` event (so the UI shows
     what went wrong instead of silently hanging) AND logged server-side.
     """
+    logger.info("_run_stt: starting")
     try:
         settings = ElevenLabsSTTSettings(api_key=get_elevenlabs_api_key())
         provider = ElevenLabsSTTProvider(settings=settings)
+        logger.info("_run_stt: provider constructed, opening stream")
+
+        frame_count = 0
 
         async def audio_frames() -> AsyncIterator[bytes]:
+            nonlocal frame_count
             while True:
                 try:
                     frame = await track.recv()
                 except MediaStreamError:
+                    logger.info("_run_stt: track ended after %d frames", frame_count)
                     return
                 pcm = _frame_to_pcm(frame)
                 if pcm:
+                    frame_count += 1
+                    if frame_count == 1:
+                        logger.info("_run_stt: first audio frame received")
                     yield pcm
 
+        event_count = 0
         async for event in provider.stream(audio_frames()):
+            event_count += 1
+            logger.info(
+                "_run_stt: event #%d kind=%s text=%r",
+                event_count,
+                event.kind,
+                event.text,
+            )
             _send_event(channel, event)
+        logger.info(
+            "_run_stt: stream ended after %d events, %d frames",
+            event_count,
+            frame_count,
+        )
     except Exception as exc:
         logger.exception("STT stream failed")
         _send_error(channel, str(exc))

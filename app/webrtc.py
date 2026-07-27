@@ -46,10 +46,11 @@ class STTStarter:
     ICE/DTLS/SCTP establish between two real peers, which is out of CI scope).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_start: Any = None) -> None:
         self._track: MediaStreamTrack | None = None
         self._channel: Any = None
         self._started: bool = False
+        self._on_start = on_start
         self.start_calls: list[tuple[MediaStreamTrack, Any]] = []
 
     def set_track(self, track: MediaStreamTrack) -> None:
@@ -70,6 +71,8 @@ class STTStarter:
         if self._track is not None and self._channel is not None:
             self._started = True
             self.start_calls.append((self._track, self._channel))
+            if self._on_start is not None:
+                self._on_start(self._track, self._channel)
 
 
 @router.post("/offer", response_model=OfferResponse)
@@ -83,13 +86,14 @@ async def offer(req: OfferRequest) -> OfferResponse:
     #
     # The audio track event and the datachannel event fire independently; the
     # data channel (SCTP) usually completes after the audio track is signaled.
-    # So we collect whichever arrives first and start STT only once both are
-    # The audio track event and the datachannel event fire independently; the
-    # data channel (SCTP) usually completes after the audio track is signaled.
     # STTStarter joins them: it starts the STT task exactly once, only after
     # both the audio track and the 'transcript' channel have arrived, in either
     # order.
-    starter = STTStarter()
+    starter = STTStarter(
+        on_start=lambda track, channel: asyncio.ensure_future(
+            _run_stt(track, channel)
+        )
+    )
 
     @pc.on("datachannel")
     def on_datachannel(channel: Any) -> None:

@@ -62,3 +62,24 @@ def test_starter_does_not_start_with_only_one_input():
     starter2 = STTStarter()
     starter2.set_channel(FakeChannel("transcript"))
     assert starter2.start_calls == []
+
+
+def test_starter_invokes_on_start_callback():
+    """The on_start callback (which launches _run_stt in production) must fire
+    exactly once when both inputs arrive. Regression guard for the refactor that
+    once recorded start_calls but never dispatched anything."""
+    calls: list[tuple[FakeTrack, FakeChannel]] = []
+    starter = STTStarter(on_start=lambda track, channel: calls.append((track, channel)))
+    track = FakeTrack()
+    channel = FakeChannel("transcript")
+
+    starter.set_track(track)
+    assert calls == []  # not yet
+    starter.set_channel(channel)
+
+    assert calls == [(track, channel)]
+    assert starter.start_calls == [(track, channel)]
+
+    # A duplicate event must not fire the callback a second time.
+    starter.set_track(FakeTrack())
+    assert calls == [(track, channel)]

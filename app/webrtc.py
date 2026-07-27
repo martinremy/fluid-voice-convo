@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
+from typing import Any
 
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
-
-if TYPE_CHECKING:
-    from av.frame import Frame
-    from av.packet import Packet
+from aiortc.mediastreams import MediaStreamError
 from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
+
+from app.config import ElevenLabsSTTSettings, get_elevenlabs_api_key
+from app.stt import ElevenLabsSTTProvider, TranscriptEvent
 
 logger = logging.getLogger(__name__)
 
@@ -35,28 +37,25 @@ class OfferResponse(BaseModel):
     type: str
 
 
-class LoopbackAudioTrack(MediaStreamTrack):
-    """Relays frames from an incoming audio track back to the peer."""
-
-    kind = "audio"
-
-    def __init__(self, incoming: MediaStreamTrack) -> None:
-        super().__init__()
-        self.incoming = incoming
-
-    async def recv(self) -> Frame | Packet:
-        return await self.incoming.recv()
-
-
 @router.post("/offer", response_model=OfferResponse)
 async def offer(req: OfferRequest) -> OfferResponse:
     pc = RTCPeerConnection()
     peer_connections.add(pc)
 
+    # The browser creates the 'transcript' data channel; the server receives it
+    # via the datachannel event. (WebRTC forbids the answerer from adding new
+    # m-lines, so the server cannot create the channel itself.)
+    channels: dict[str, Any] = {}
+
+    @pc.on("datachannel")
+    def on_datachannel(channel: Any) -> None:
+        channels[channel.label] = channel
+
     @pc.on("track")
     def on_track(track: MediaStreamTrack) -> None:
         if track.kind == "audio":
-            pc.addTrack(LoopbackAudioTrack(track))
+            transcript_channel = channels.get("transcript")
+            asyncio.ensure_future(_run_stt(track, transcript_channel))
 
     @pc.on("connectionstatechange")
     def on_state_change() -> None:
@@ -69,3 +68,55 @@ async def offer(req: OfferRequest) -> OfferResponse:
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
     return OfferResponse(sdp=pc.localDescription.sdp, type=pc.localDescription.type)
+
+
+async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
+    """Feed incoming audio frames to the STT provider and forward transcript
+    events to the browser over the data channel."""
+    if channel is None:
+        logger.warning("No 'transcript' data channel; audio will not be transcribed")
+        return
+
+    settings = ElevenLabsSTTSettings(api_key=get_elevenlabs_api_key())
+    provider = ElevenLabsSTTProvider(settings=settings)
+
+    async def audio_frames() -> AsyncIterator[bytes]:
+        while True:
+            try:
+                frame = await track.recv()
+            except MediaStreamError:
+                return
+            pcm = _frame_to_pcm(frame)
+            if pcm:
+                yield pcm
+
+    try:
+        async for event in provider.stream(audio_frames()):
+            _send_event(channel, event)
+    except Exception:
+        logger.exception("STT stream failed")
+    finally:
+        _send_closed(channel)
+
+
+def _send_event(channel: Any, event: TranscriptEvent) -> None:
+    if _channel_open(channel):
+        channel.send(json.dumps({"kind": event.kind, "text": event.text}))
+
+
+def _send_closed(channel: Any) -> None:
+    if _channel_open(channel):
+        channel.send(json.dumps({"kind": "closed", "text": ""}))
+
+
+def _channel_open(channel: Any) -> bool:
+    ready = getattr(channel, "readyState", None)
+    return ready == "open"
+
+
+def _frame_to_pcm(frame: Any) -> bytes:
+    """Convert an aiortc AudioFrame to 16 kHz mono s16 PCM bytes."""
+    try:
+        return bytes(frame.planes[0])
+    except Exception:
+        return b""

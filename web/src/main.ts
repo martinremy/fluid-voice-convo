@@ -1,10 +1,31 @@
 const startButton = document.getElementById("start") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLParagraphElement;
+const partialEl = document.getElementById("partial") as HTMLParagraphElement;
+const committedEl = document.getElementById(
+  "committed-turns",
+) as HTMLDivElement;
 
 let pc: RTCPeerConnection | null = null;
 
 function setStatus(text: string): void {
   statusEl.textContent = text;
+}
+
+function renderTranscriptEvent(kind: string, text: string): void {
+  if (kind === "closed") {
+    partialEl.textContent = "";
+    return;
+  }
+  if (kind === "partial") {
+    partialEl.textContent = text;
+    return;
+  }
+  if (kind === "committed") {
+    partialEl.textContent = "";
+    const turn = document.createElement("p");
+    turn.textContent = text;
+    committedEl.appendChild(turn);
+  }
 }
 
 async function startLoopback(): Promise<void> {
@@ -16,15 +37,24 @@ async function startLoopback(): Promise<void> {
   setStatus("Creating peer connection…");
   pc = new RTCPeerConnection();
 
+  // The browser creates the transcript data channel; the server receives it
+  // and sends transcript events back as JSON {kind, text}.
+  const transcriptChannel = pc.createDataChannel("transcript");
+  transcriptChannel.onmessage = (event) => {
+    try {
+      const { kind, text } = JSON.parse(event.data) as {
+        kind: string;
+        text: string;
+      };
+      renderTranscriptEvent(kind, text);
+    } catch {
+      // ignore malformed messages
+    }
+  };
+
   for (const track of stream.getTracks()) {
     pc.addTrack(track, stream);
   }
-
-  pc.ontrack = (event) => {
-    const audio = new Audio();
-    audio.srcObject = event.streams[0];
-    audio.play().catch((err) => setStatus(`Playback error: ${err}`));
-  };
 
   pc.oniceconnectionstatechange = () => {
     if (pc) setStatus(`ICE: ${pc.iceConnectionState}`);
@@ -48,7 +78,7 @@ async function startLoopback(): Promise<void> {
 
   const answer = await response.json();
   await pc.setRemoteDescription(answer);
-  setStatus("Connected — speak with headphones on");
+  setStatus("Connected — speak (transcript appears below)");
 }
 
 startButton.addEventListener("click", () => {

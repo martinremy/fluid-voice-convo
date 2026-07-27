@@ -10,7 +10,11 @@
     <main>
       <h1>Fluid Voice</h1>
       <p id="status">Idle</p>
-      <button id="start">Start loopback</button>
+      <button id="start">Start</button>
+      <section id="transcript" aria-live="polite">
+        <p id="partial" class="partial"></p>
+        <div id="committed-turns"></div>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

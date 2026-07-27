@@ -22,3 +22,17 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+#transcript {
+  margin-top: 1.5rem;
+  max-width: 40rem;
+  width: 100%;
+  text-align: left;
+}
+.partial {
+  opacity: 0.5;
+  font-style: italic;
+  min-height: 1.5em;
+}
+#committed-turns p {
+  margin: 0.3em 0;
+}

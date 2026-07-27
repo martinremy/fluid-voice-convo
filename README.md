@@ -12,7 +12,10 @@ text-to-speech.
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.11+ (a `uv venv --python 3.11` fetches it for you if your system
+  Python is older)
+- [uv](https://docs.astral.sh/uv/) — Python package/project manager used
+  throughout
 - Node.js 20+
 - Headphones (to avoid feedback during the loopback demo)
 
@@ -23,7 +26,7 @@ Two terminals, both from the repo root:
 ```bash
 # Terminal 1 — FastAPI + WebRTC server
 uv venv --python 3.11 && uv pip install -e ".[dev]"
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 ```
 
 ```bash
@@ -34,12 +37,17 @@ cd web && npm install && npm run dev
 Open the URL Vite prints (e.g. `http://localhost:5173`), put on headphones,
 click **Start loopback**, and speak.
 
+> **Tip:** Run every Python command through `uv run ...` (e.g.
+> `uv run pytest`) so it resolves to the project's `.venv` regardless of
+> whether you activated it or use pyenv. Alternatively, `source .venv/bin/activate`
+> once per shell and use bare `uvicorn` / `ruff` / `pytest`.
+
 ### Tests, lint, and type-check
 
 ```bash
-ruff check app tests
-mypy app
-pytest -v
+uv run ruff check app tests
+uv run mypy app
+uv run pytest -v
 ```
 
 These run in CI on every push and pull request (see `.github/workflows/ci.yml`).

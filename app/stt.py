@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Literal, Protocol
+
+from elevenlabs import (
+    AudioFormat,
+    CommitStrategy,
+    ElevenLabs,
+    RealtimeAudioOptions,
+    RealtimeEvents,
+)
+from elevenlabs.realtime.connection import (
+    RealtimeConnection as SDKRealtimeConnection,
+)
 
 from app.config import ElevenLabsSTTSettings
 
@@ -80,5 +92,76 @@ class ElevenLabsSTTProvider:
         return None
 
     def _build_real_connection(self) -> RealtimeConnection:
-        # Implemented in Task 4.
-        raise NotImplementedError
+        return ElevenLabsRealtimeConnection(
+            api_key=self._settings.api_key, model_id=self._settings.model_id
+        )
+
+
+class ElevenLabsRealtimeConnection:
+    """RealtimeConnection backed by the elevenlabs SDK.
+
+    Uses VAD commit strategy for microphone input. Audio is sent as 16 kHz
+    mono PCM (base64-encoded). Transcript events are queued from sync SDK
+    callbacks onto an asyncio.Queue for async consumption.
+    """
+
+    _CLOSE_SENTINEL: dict = {"message_type": "__closed__"}
+
+    def __init__(self, api_key: str, model_id: str) -> None:
+        self._client = ElevenLabs(api_key=api_key)
+        self._model_id = model_id
+        self._conn: SDKRealtimeConnection | None = None
+        self._incoming: asyncio.Queue[dict] = asyncio.Queue()
+
+    async def connect(self) -> None:
+        self._conn = await self._client.speech_to_text.realtime.connect(
+            RealtimeAudioOptions(
+                model_id=self._model_id,
+                audio_format=AudioFormat.PCM_16000,
+                sample_rate=16000,
+                commit_strategy=CommitStrategy.VAD,
+            )
+        )
+        for event in (
+            RealtimeEvents.PARTIAL_TRANSCRIPT,
+            RealtimeEvents.COMMITTED_TRANSCRIPT,
+            RealtimeEvents.SESSION_STARTED,
+            RealtimeEvents.INPUT_ERROR,
+            RealtimeEvents.ERROR,
+            RealtimeEvents.CLOSE,
+        ):
+            self._conn.on(event, self._enqueue)
+
+    def _enqueue(self, msg: object) -> None:
+        if isinstance(msg, dict):
+            if msg.get("message_type") == RealtimeEvents.CLOSE:
+                self._incoming.put_nowait(self._CLOSE_SENTINEL)
+            else:
+                self._incoming.put_nowait(msg)
+        else:
+            self._incoming.put_nowait(self._CLOSE_SENTINEL)
+
+    async def send_audio(self, audio: bytes) -> None:
+        if self._conn is None:
+            raise RuntimeError("connect() not called")
+        await self._conn.send(
+            {"audio_base_64": base64.b64encode(audio).decode(), "sample_rate": 16000}
+        )
+
+    async def commit(self) -> None:
+        if self._conn is not None:
+            await self._conn.commit()
+
+    async def close(self) -> None:
+        if self._conn is not None:
+            await self._conn.close()
+
+    def messages(self) -> AsyncIterator[dict]:
+        async def gen() -> AsyncIterator[dict]:
+            while True:
+                msg = await self._incoming.get()
+                if msg.get("message_type") == "__closed__":
+                    return
+                yield msg
+
+        return gen()

@@ -38,6 +38,8 @@ class OfferResponse(BaseModel):
 class LoopbackAudioTrack(MediaStreamTrack):
     """Relays frames from an incoming audio track back to the peer."""
 
+    kind = "audio"
+
     def __init__(self, incoming: MediaStreamTrack) -> None:
         super().__init__()
         self.incoming = incoming

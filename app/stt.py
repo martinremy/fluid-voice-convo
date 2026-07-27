@@ -132,12 +132,12 @@ class ElevenLabsRealtimeConnection:
         ):
             self._conn.on(event, self._enqueue)
 
-    def _enqueue(self, msg: object) -> None:
+    def _enqueue(self, msg: object | None = None) -> None:
+        # The SDK emits CLOSE with no argument (bare _emit(CLOSE)); transcript
+        # and error events pass a dict. A None or non-dict payload means the
+        # connection is closing — queue the sentinel so messages() returns.
         if isinstance(msg, dict):
-            if msg.get("message_type") == RealtimeEvents.CLOSE:
-                self._incoming.put_nowait(self._CLOSE_SENTINEL)
-            else:
-                self._incoming.put_nowait(msg)
+            self._incoming.put_nowait(msg)
         else:
             self._incoming.put_nowait(self._CLOSE_SENTINEL)
 

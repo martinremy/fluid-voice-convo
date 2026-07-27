@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +12,12 @@ from app.webrtc import router as webrtc_router
 # python-dotenv was already a declared dependency; calling it here is what makes
 # the .env file actually take effect.
 load_dotenv()
+
+# Surface app-level INFO logs (event flow, STT diagnostics) under uvicorn.
+# Set on both the "app" namespace and explicitly on "app.webrtc" because
+# uvicorn's logging config can leave child loggers at WARNING otherwise.
+logging.getLogger("app").setLevel(logging.INFO)
+logging.getLogger("app.webrtc").setLevel(logging.INFO)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
 

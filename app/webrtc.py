@@ -12,7 +12,12 @@ from aiortc.mediastreams import MediaStreamError
 from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
 
-from app.config import ElevenLabsSTTSettings, get_elevenlabs_api_key
+from app.config import (
+    ElevenLabsSTTSettings,
+    get_elevenlabs_api_key,
+    get_openai_compatible_settings,
+)
+from app.intelligence import OpenAICompatibleIntelligenceProvider
 from app.stt import ElevenLabsSTTProvider, TranscriptEvent
 
 logger = logging.getLogger(__name__)
@@ -167,6 +172,8 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
                         yield pcm
 
         event_count = 0
+        intelligence_settings = get_openai_compatible_settings()
+        intelligence = OpenAICompatibleIntelligenceProvider(intelligence_settings)
         async for event in provider.stream(audio_frames()):
             event_count += 1
             logger.info(
@@ -175,7 +182,15 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
                 event.kind,
                 event.text,
             )
-            _send_event(channel, event)
+            if event.kind == "committed":
+                # Send the committed user turn to the browser, then stream the
+                # assistant's response. Inline await: sequential, correct for
+                # v1; Phase 5 adds barge-in/cancellation.
+                _send_event(channel, event)
+                await _respond_to_committed(intelligence, event.text, channel)
+            else:
+                # partial, error, etc. pass straight through.
+                _send_event(channel, event)
         logger.info(
             "_run_stt: stream ended after %d events, %d frames",
             event_count,
@@ -188,21 +203,39 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
         _send_closed(channel)
 
 
-def _send_event(channel: Any, event: TranscriptEvent) -> None:
+def _send_json(channel: Any, payload: dict[str, str]) -> None:
     if _channel_open(channel):
-        channel.send(json.dumps({"kind": event.kind, "text": event.text}))
+        channel.send(json.dumps(payload))
+
+
+def _send_event(channel: Any, event: TranscriptEvent) -> None:
+    _send_json(channel, {"kind": event.kind, "text": event.text})
 
 
 def _send_error(channel: Any, message: str) -> None:
-    if _channel_open(channel):
-        channel.send(json.dumps({"kind": "error", "text": message}))
+    _send_json(channel, {"kind": "error", "text": message})
 
 
 def _send_closed(channel: Any) -> None:
-    if _channel_open(channel):
-        channel.send(json.dumps({"kind": "closed", "text": ""}))
+    _send_json(channel, {"kind": "closed", "text": ""})
 
 
 def _channel_open(channel: Any) -> bool:
     ready = getattr(channel, "readyState", None)
     return ready == "open"
+
+
+async def _respond_to_committed(
+    intelligence: OpenAICompatibleIntelligenceProvider, text: str, channel: Any
+) -> None:
+    """On a committed user transcript, stream the assistant's response to the
+    browser as assistant_token / assistant_done events. Errors are surfaced."""
+    try:
+        await intelligence.ingest(text)
+        async for token in intelligence.stream_response():
+            _send_json(channel, {"kind": "assistant_token", "text": token})
+    except Exception as exc:
+        logger.exception("intelligence stream failed")
+        _send_error(channel, str(exc))
+    finally:
+        _send_json(channel, {"kind": "assistant_done", "text": ""})

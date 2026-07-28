@@ -128,6 +128,10 @@ class ElevenLabsTTSProvider:
                 text=text_iter,
                 model_id=model_id,
                 output_format="pcm_16000",
+                # Pass None explicitly: the SDK defaults voice_settings to an
+                # Ellipsis sentinel that is truthy, so its internal
+                # `voice_settings.dict() if voice_settings else None` crashes.
+                voice_settings=None,
             )
             return iter(result)
 

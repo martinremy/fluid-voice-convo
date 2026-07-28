@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Protocol
 
+from openai import AsyncOpenAI
+
 from app.config import OpenAICompatibleSettings
 
 
@@ -32,6 +34,32 @@ class IntelligenceProvider(Protocol):
     async def ingest(self, user_text: str) -> None: ...
 
     async def stream_response(self) -> AsyncIterator[str]: ...
+
+
+class OpenAIChatCompleter:
+    """ChatCompleter backed by the openai async SDK.
+
+    Calls an OpenAI-compatible /v1/chat/completions endpoint with stream=True
+    and yields delta.content token strings (skipping empty/None deltas).
+    """
+
+    def __init__(self, settings: OpenAICompatibleSettings) -> None:
+        self._client = AsyncOpenAI(
+            api_key=settings.api_key, base_url=settings.base_url
+        )
+        self._model = settings.model
+
+    async def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
+        stream = await self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,  # type: ignore[arg-type]
+            stream=True,
+        )
+        async for chunk in stream:  # type: ignore[union-attr]
+            if chunk.choices:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
 
 
 class OpenAICompatibleIntelligenceProvider:
@@ -83,5 +111,4 @@ class OpenAICompatibleIntelligenceProvider:
         return messages
 
     def _build_real_completer(self) -> ChatCompleter:
-        # Implemented in Task 4.
-        raise NotImplementedError
+        return OpenAIChatCompleter(self._settings)

@@ -40,3 +40,9 @@ button:disabled {
   color: #f66;
   font-style: normal;
 }
+.assistant {
+  margin-top: 0.6rem;
+  padding-left: 0.6rem;
+  border-left: 3px solid #2a7;
+  min-height: 1.5em;
+}

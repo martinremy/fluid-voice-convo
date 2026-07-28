@@ -4,6 +4,7 @@ const partialEl = document.getElementById("partial") as HTMLParagraphElement;
 const committedEl = document.getElementById(
   "committed-turns",
 ) as HTMLDivElement;
+const assistantEl = document.getElementById("assistant") as HTMLParagraphElement;
 
 let pc: RTCPeerConnection | null = null;
 
@@ -22,6 +23,23 @@ function renderTranscriptEvent(kind: string, text: string): void {
     err.className = "error";
     err.textContent = `Error: ${text}`;
     committedEl.appendChild(err);
+    return;
+  }
+  if (kind === "assistant_token") {
+    assistantEl.textContent += text;
+    return;
+  }
+  if (kind === "assistant_done") {
+    // Move the finished assistant text into the committed turns list and clear
+    // the live line.
+    const finished = assistantEl.textContent;
+    assistantEl.textContent = "";
+    if (finished) {
+      const turn = document.createElement("p");
+      turn.className = "assistant";
+      turn.textContent = finished;
+      committedEl.appendChild(turn);
+    }
     return;
   }
   if (kind === "partial") {

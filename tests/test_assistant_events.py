@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from unittest.mock import MagicMock
 
 from av import AudioFrame
@@ -71,7 +73,11 @@ async def test_respond_with_tts_tees_tokens_and_audio():
     channel = MagicMock()
     channel.readyState = "open"
     intelligence = FakeIntelligence(["Hel", "lo", " world."])
-    tts = FakeTTS([b"audio1", b"audio2"])
+    # Use full 20ms frames of nonzero PCM so recv() returns pushed audio, not
+    # the silence fallback (640 bytes = 320 samples @ 16kHz s16 mono). Asserting
+    # nonzero samples proves push() actually fed the track.
+    nonzero_pcm = (b"\x01\x02" * 320)
+    tts = FakeTTS([nonzero_pcm])
     track = TTSOutputTrack()
 
     await _respond_with_tts(intelligence, tts, track, "hi", channel)
@@ -82,9 +88,13 @@ async def test_respond_with_tts_tees_tokens_and_audio():
     assert sent[-1] == '{"kind": "assistant_done", "text": ""}'
     # Text chunks went to TTS (boundary-batched).
     assert "".join(tts.received_chunks) == "Hello world."
-    # Audio was pushed onto the track.
+    # Audio was pushed onto the track and reaches the frame (not silence).
     first = await track.recv()
     assert isinstance(first, AudioFrame)
+    # The pushed PCM is nonzero, so the frame must not be all-zero silence.
+    plane_bytes = bytes(first.planes[0])
+    silence = b"\x00" * len(plane_bytes)
+    assert plane_bytes != silence
 
 
 async def test_respond_with_tts_surfaces_tts_error():

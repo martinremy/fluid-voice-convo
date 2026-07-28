@@ -5,9 +5,10 @@ in, streamed intelligence, streamed speech out. Open source.
 
 ## Status
 
-Phase 1 (WebRTC transport) and Phase 2 (streaming STT) are implemented on the
-`first-cut` branch. Phases 3–5 (intelligence, TTS, barge-in) are planned. See
-`README.md` for the user-facing dev workflow; this file is for coding agents.
+Phases 1–4 (WebRTC transport, streaming STT, intelligence, TTS) are implemented
+on the `first-cut` branch — the full voice loop works. Phase 5 (barge-in /
+interruption) is deferred to a separate PR. See `README.md` for the user-facing
+dev workflow; this file is for coding agents.
 
 ## Running dev notes
 
@@ -23,11 +24,11 @@ in [running-dev-notes/](running-dev-notes/) at the **repo root**.
 
 ## Architecture (load-bearing)
 
-```
+```text
 Browser (vanilla TS + Vite) ──WebRTC──► FastAPI + aiortc
                                          ├─ STTProvider   → ElevenLabs Scribe v2 Realtime
-                                         ├─ IntelligenceProvider  (Phase 3, not yet built)
-                                         └─ TTSProvider   (Phase 4, not yet built)
+                                         ├─ IntelligenceProvider → OpenAI-compatible streaming endpoint
+                                         └─ TTSProvider   → ElevenLabs streaming TTS
 ```
 
 - The **browser does no AI logic** — only mic capture, WebRTC signaling, and

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from aiortc import RTCPeerConnection
 from aiortc.mediastreams import AudioStreamTrack
 

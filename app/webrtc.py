@@ -182,10 +182,8 @@ async def _run_stt(
                         yield pcm
 
         event_count = 0
-        intelligence_settings = get_openai_compatible_settings()
-        intelligence = OpenAICompatibleIntelligenceProvider(intelligence_settings)
-        tts_settings = get_elevenlabs_tts_settings()
-        tts = ElevenLabsTTSProvider(tts_settings)
+        intelligence: OpenAICompatibleIntelligenceProvider | None = None
+        tts: ElevenLabsTTSProvider | None = None
         async for event in provider.stream(audio_frames()):
             event_count += 1
             logger.info(
@@ -199,6 +197,16 @@ async def _run_stt(
                 # assistant's response: tokens to the data channel AND audio to
                 # the outgoing WebRTC track via TTS. Inline await: sequential,
                 # correct for v1; Phase 5 adds barge-in/cancellation.
+                #
+                # Intelligence + TTS providers are constructed lazily on the
+                # first committed turn (not at STT start) so the standalone
+                # STT demo works without OPENAI_COMPATIBLE_* / TTS voice vars.
+                if intelligence is None:
+                    intelligence = OpenAICompatibleIntelligenceProvider(
+                        get_openai_compatible_settings()
+                    )
+                if tts is None:
+                    tts = ElevenLabsTTSProvider(get_elevenlabs_tts_settings())
                 _send_event(channel, event)
                 await _respond_with_tts(
                     intelligence, tts, tts_output_track, event.text, channel
@@ -302,12 +310,21 @@ async def _respond_with_tts(
             async for token in intelligence.stream_response():
                 await channel_queue.put(token)
                 await tts_queue.put(token)
-            await channel_queue.put(None)
-            await tts_queue.put(None)
-            await asyncio.gather(pump_channel, pump_tts)
         finally:
+            # Always signal end-of-stream and await the pumps so exceptions in
+            # stream_response don't leave them as unretrieved tasks, and so
+            # assistant_done (sent below) doesn't race the pumps' last flush.
             await channel_queue.put(None)
             await tts_queue.put(None)
+            results = await asyncio.gather(
+                pump_channel, pump_tts, return_exceptions=True
+            )
+            # Surface any pump exception (e.g. TTS failure) so the outer
+            # except sends an error event — return_exceptions=True would
+            # otherwise swallow it.
+            for result in results:
+                if isinstance(result, Exception):
+                    raise result
     except Exception as exc:
         logger.exception("intelligence/tts stream failed")
         _send_error(channel, str(exc))

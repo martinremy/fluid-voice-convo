@@ -19,7 +19,7 @@ end-to-end voice loop: speak → transcript → assistant reply (text + spoken).
 
 ## Architecture as built
 
-```
+```text
 Browser (vanilla TS + Vite)
   │  WebRTC: mic audio up, TTS audio down; transcript + assistant text data channel
   ▼

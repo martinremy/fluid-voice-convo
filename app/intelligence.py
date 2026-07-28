@@ -86,9 +86,9 @@ class OpenAICompatibleIntelligenceProvider:
         self._history.append({"role": "user", "content": user_text})
 
     async def stream_response(self) -> AsyncIterator[str]:
+        if self._completer is None:
+            self._completer = self._build_real_completer()
         completer = self._completer
-        if completer is None:
-            completer = self._build_real_completer()
         messages = self._messages_to_send()
         collected: list[str] = []
         try:

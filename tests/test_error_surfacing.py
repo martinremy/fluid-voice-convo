@@ -1,27 +1,44 @@
+from __future__ import annotations
+
 from unittest.mock import MagicMock
 
 from app.stt import TranscriptEvent
 from app.webrtc import _send_closed, _send_error, _send_event
 
 
-def test_main_calls_load_dotenv():
-    """app.main must call load_dotenv() at import time so a .env file is read
-    into the environment. Regression guard for the bug where python-dotenv was
-    a declared dependency but never called, so ELEVENLABS_API_KEY stayed unset
-    at runtime and STT failed with a swallowed RuntimeError.
+def test_main_calls_load_dotenv(tmp_path, monkeypatch):
+    """app.main must load a .env file into os.environ at import time. Regression
+    guard for the bug where python-dotenv was a declared dependency but never
+    called, so ELEVENLABS_API_KEY stayed unset and STT failed with a swallowed
+    RuntimeError.
 
-    A source-level assertion is used deliberately: a behavior test that reloads
-    the module risks leaking real secrets via os.environ in failure output, and
-    load_dotenv's no-arg search/override semantics make a hermetic behavior
-    test fragile. Asserting the call exists is the precise guarantee we need.
+    Hermetic behavior test: monkeypatch dotenv.find_dotenv to return a temp
+    .env with a sentinel var, reload app.main, and assert the sentinel landed
+    in the environment. We never print os.environ, so real secrets can't leak
+    in failure output. (find_dotenv's default usecwd=False resolves from the
+    calling module's location, so a bare chdir isn't enough to redirect it.)
     """
-    from pathlib import Path
+    import importlib
+    import os
+
+    sentinel = "FVC_TEST_DOTENV_SENTINEL"
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{sentinel}=loaded-by-dotenv\n")
+
+    monkeypatch.delenv(sentinel, raising=False)
+    # find_dotenv is imported into dotenv.main (where load_dotenv resolves the
+    # path), so patch it there, not on the dotenv package re-export.
+    monkeypatch.setattr("dotenv.main.find_dotenv", lambda *a, **kw: str(env_file))
 
     import app.main as main_module
 
-    source = Path(main_module.__file__).read_text()
-    assert "load_dotenv()" in source
-    assert "from dotenv import load_dotenv" in source
+    importlib.reload(main_module)
+
+    value = os.environ.get(sentinel)
+    assert value == "loaded-by-dotenv", (
+        "app.main did not load .env into os.environ at import "
+        "(load_dotenv() missing or not finding the file)"
+    )
 
 
 def test_send_error_surfaces_message_to_open_channel():

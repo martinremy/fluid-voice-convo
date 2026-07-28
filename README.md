@@ -100,11 +100,12 @@ uv run mypy app
 uv run pytest -v
 ```
 
-These run in CI on every push and pull request (see `.github/workflows/ci.yml`).
+These run in CI on pushes to `main`/`first-cut` and on pull requests (see
+`.github/workflows/ci.yml`).
 
 ## Architecture
 
-```
+```text
 Browser (vanilla TypeScript + Vite)
   │  WebRTC: mic audio up, TTS audio down; transcript + assistant text data channel
   ▼

@@ -12,13 +12,16 @@ from aiortc.mediastreams import MediaStreamError
 from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
 
+from app.audio import TTSOutputTrack
 from app.config import (
     ElevenLabsSTTSettings,
     get_elevenlabs_api_key,
+    get_elevenlabs_tts_settings,
     get_openai_compatible_settings,
 )
 from app.intelligence import OpenAICompatibleIntelligenceProvider
 from app.stt import ElevenLabsSTTProvider, TranscriptEvent
+from app.tts import ElevenLabsTTSProvider, TTSProvider, chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +98,10 @@ async def offer(req: OfferRequest) -> OfferResponse:
     # STTStarter joins them: it starts the STT task exactly once, only after
     # both the audio track and the 'transcript' channel have arrived, in either
     # order.
+    tts_output_track = TTSOutputTrack()
     starter = STTStarter(
         on_start=lambda track, channel: asyncio.ensure_future(
-            _run_stt(track, channel)
+            _run_stt(track, channel, tts_output_track)
         )
     )
 
@@ -115,6 +119,10 @@ async def offer(req: OfferRequest) -> OfferResponse:
     def on_track(track: MediaStreamTrack) -> None:
         logger.info("track event: kind=%s id=%s", track.kind, track.id)
         if track.kind == "audio":
+            # Attach the outgoing TTS track to the peer connection now that an
+            # audio transceiver exists (adding it before setRemoteDescription
+            # fails when the offer has no matching audio m-line).
+            pc.addTrack(tts_output_track)
             starter.set_track(track)
 
     @pc.on("connectionstatechange")
@@ -131,7 +139,9 @@ async def offer(req: OfferRequest) -> OfferResponse:
     return OfferResponse(sdp=pc.localDescription.sdp, type=pc.localDescription.type)
 
 
-async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
+async def _run_stt(
+    track: MediaStreamTrack, channel: Any, tts_output_track: TTSOutputTrack
+) -> None:
     """Feed incoming audio frames to the STT provider and forward transcript
     events to the browser over the data channel.
 
@@ -174,6 +184,8 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
         event_count = 0
         intelligence_settings = get_openai_compatible_settings()
         intelligence = OpenAICompatibleIntelligenceProvider(intelligence_settings)
+        tts_settings = get_elevenlabs_tts_settings()
+        tts = ElevenLabsTTSProvider(tts_settings)
         async for event in provider.stream(audio_frames()):
             event_count += 1
             logger.info(
@@ -184,10 +196,13 @@ async def _run_stt(track: MediaStreamTrack, channel: Any) -> None:
             )
             if event.kind == "committed":
                 # Send the committed user turn to the browser, then stream the
-                # assistant's response. Inline await: sequential, correct for
-                # v1; Phase 5 adds barge-in/cancellation.
+                # assistant's response: tokens to the data channel AND audio to
+                # the outgoing WebRTC track via TTS. Inline await: sequential,
+                # correct for v1; Phase 5 adds barge-in/cancellation.
                 _send_event(channel, event)
-                await _respond_to_committed(intelligence, event.text, channel)
+                await _respond_with_tts(
+                    intelligence, tts, tts_output_track, event.text, channel
+                )
             else:
                 # partial, error, etc. pass straight through.
                 _send_event(channel, event)
@@ -229,13 +244,72 @@ async def _respond_to_committed(
     intelligence: OpenAICompatibleIntelligenceProvider, text: str, channel: Any
 ) -> None:
     """On a committed user transcript, stream the assistant's response to the
-    browser as assistant_token / assistant_done events. Errors are surfaced."""
+    browser as assistant_token / assistant_done events. Errors are surfaced.
+
+    Retained as a no-TTS path for callers that only want text; the live loop
+    uses _respond_with_tts.
+    """
     try:
         await intelligence.ingest(text)
         async for token in intelligence.stream_response():
             _send_json(channel, {"kind": "assistant_token", "text": token})
     except Exception as exc:
         logger.exception("intelligence stream failed")
+        _send_error(channel, str(exc))
+    finally:
+        _send_json(channel, {"kind": "assistant_done", "text": ""})
+
+
+async def _respond_with_tts(
+    intelligence: OpenAICompatibleIntelligenceProvider,
+    tts: TTSProvider,
+    output_track: TTSOutputTrack,
+    text: str,
+    channel: Any,
+) -> None:
+    """On a committed transcript: stream assistant tokens to the browser AND
+    feed them (boundary-chunked) into TTS, pushing audio onto the output track.
+    Each token is duplicated to two queues (one per consumer) so both receive
+    the full stream. Errors are surfaced; assistant_done always fires.
+    """
+    try:
+        await intelligence.ingest(text)
+        channel_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def _to_channel() -> None:
+            while True:
+                token = await channel_queue.get()
+                if token is None:
+                    return
+                _send_json(channel, {"kind": "assistant_token", "text": token})
+
+        async def _to_tts() -> None:
+            async def _token_gen() -> AsyncIterator[str]:
+                while True:
+                    token = await tts_queue.get()
+                    if token is None:
+                        return
+                    yield token
+
+            async for audio in tts.stream(chunk_text(_token_gen())):
+                await output_track.push(audio)
+            await output_track.stop_stream()
+
+        pump_channel = asyncio.ensure_future(_to_channel())
+        pump_tts = asyncio.ensure_future(_to_tts())
+        try:
+            async for token in intelligence.stream_response():
+                await channel_queue.put(token)
+                await tts_queue.put(token)
+            await channel_queue.put(None)
+            await tts_queue.put(None)
+            await asyncio.gather(pump_channel, pump_tts)
+        finally:
+            await channel_queue.put(None)
+            await tts_queue.put(None)
+    except Exception as exc:
+        logger.exception("intelligence/tts stream failed")
         _send_error(channel, str(exc))
     finally:
         _send_json(channel, {"kind": "assistant_done", "text": ""})

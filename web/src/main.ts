@@ -78,6 +78,13 @@ async function startLoopback(): Promise<void> {
     }
   };
 
+  // Play incoming TTS audio from the server's outgoing track.
+  pc.ontrack = (event) => {
+    const audio = new Audio();
+    audio.srcObject = event.streams[0];
+    audio.play().catch((err) => console.log("[audio playback] error", err));
+  };
+
   for (const track of stream.getTracks()) {
     pc.addTrack(track, stream);
   }

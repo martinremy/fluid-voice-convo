@@ -14,9 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class TTSProvider(Protocol):
-    """Streaming text-to-speech: consumes text chunks, yields PCM audio bytes."""
+    """Streaming text-to-speech: consumes text chunks, yields PCM audio bytes.
 
-    async def stream(
+    `stream` is an async generator function (declared `async def` with `yield`),
+    so callers write `async for audio in tts.stream(chunks)` with no await on
+    the call itself.
+    """
+
+    def stream(
         self, text_chunks: AsyncIterator[str]
     ) -> AsyncIterator[bytes]: ...
 

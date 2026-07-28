@@ -1,0 +1,48 @@
+:root {
+  font-family: system-ui, sans-serif;
+}
+body {
+  margin: 0;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  background: #111;
+  color: #eee;
+}
+button {
+  font-size: 1rem;
+  padding: 0.6rem 1.2rem;
+  border-radius: 0.5rem;
+  border: 0;
+  background: #2a7;
+  color: #fff;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#transcript {
+  margin-top: 1.5rem;
+  max-width: 40rem;
+  width: 100%;
+  text-align: left;
+}
+.partial {
+  opacity: 0.5;
+  font-style: italic;
+  min-height: 1.5em;
+}
+#committed-turns p {
+  margin: 0.3em 0;
+}
+#committed-turns .error {
+  color: #f66;
+  font-style: normal;
+}
+.assistant {
+  margin-top: 0.6rem;
+  padding-left: 0.6rem;
+  border-left: 3px solid #2a7;
+  min-height: 1.5em;
+}

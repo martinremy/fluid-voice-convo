@@ -47,3 +47,27 @@ def get_openai_compatible_settings() -> OpenAICompatibleSettings:
             "and add the model name."
         )
     return OpenAICompatibleSettings(api_key=api_key, base_url=base_url, model=model)
+
+
+@dataclass(frozen=True)
+class ElevenLabsTTSSettings:
+    api_key: str
+    voice_id: str
+    model_id: str = "eleven_multilingual_v2"
+
+
+def get_elevenlabs_tts_settings() -> ElevenLabsTTSSettings:
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "ELEVENLABS_API_KEY is not set. Copy .env.example to .env "
+            "and add your ElevenLabs API key."
+        )
+    voice_id = os.environ.get("ELEVENLABS_TTS_VOICE_ID")
+    if not voice_id:
+        raise RuntimeError(
+            "ELEVENLABS_TTS_VOICE_ID is not set. Copy .env.example to .env "
+            "and add an ElevenLabs voice ID for TTS."
+        )
+    model_id = os.environ.get("ELEVENLABS_TTS_MODEL_ID", "eleven_multilingual_v2")
+    return ElevenLabsTTSSettings(api_key=api_key, voice_id=voice_id, model_id=model_id)

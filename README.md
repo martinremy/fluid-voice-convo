@@ -60,20 +60,19 @@ access from a non-localhost address).
 #### Prerequisite: enable Serve in the tailnet ACL
 
 `tailscale serve --https` needs permission to provision TLS certificates. If
-you get "Serve is not enabled on your tailnet," the tailnet admin must add a
-`nodeAttrs` grant in the Tailscale admin console (Access Controls):
+you get "Serve is not enabled on your tailnet," the tailnet admin can enable
+it administratively in the Tailscale admin console (Access Controls). The
+`funnel` node attribute grants **public** internet exposure and is overkill
+for tailnet-only Serve — prefer the CLI consent prompt instead:
 
-```json
-"nodeAttrs": [
-  {
-    "target": ["autogroup:member"],
-    "attr":   ["funnel"]
-  }
-]
+```bash
+sudo tailscale serve --https=8080 http://127.0.0.1:5173
+# Tailscale will prompt: "Serve is not enabled on your tailnet."
+# Choose to proceed with tailnet-only access (no public exposure).
 ```
 
-The `funnel` attribute enables HTTPS cert provisioning for both tailnet-only
-Serve and public Funnel — there is no separate serve-only attribute.
+If the CLI prompt is not available, the admin can add a `nodeAttrs` grant
+scoped to tailnet-only Serve (not Funnel) per the Tailscale docs.
 
 #### Expose the frontend over HTTPS
 
@@ -83,7 +82,7 @@ cd web && npm install && npm run dev
 
 # Terminal 3 — expose it over HTTPS via Tailscale
 # (you may need sudo depending on how Tailscale was installed)
-sudo tailscale serve --bg --https 8080 http://localhost:5173
+sudo tailscale serve --bg --https=8080 http://127.0.0.1:5173
 ```
 
 Tailscale prints a URL like `https://<machine>.<tailnet>.ts.net:8080`.
@@ -94,7 +93,7 @@ context, so microphone access works without warnings.
 To stop the proxy:
 
 ```bash
-sudo tailscale serve --https=5173 off
+sudo tailscale serve --https=8080 off
 ```
 
 #### Allow the Tailscale hostname in Vite

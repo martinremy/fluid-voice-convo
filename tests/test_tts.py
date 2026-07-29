@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 from app.config import ElevenLabsTTSSettings
@@ -78,3 +79,42 @@ async def test_tts_provider_empty_text_yields_no_audio():
     )
     audio = [b async for b in provider.stream(_aiter([]))]
     assert audio == []
+
+
+def _recording_convert_realtime(audio_chunks: list[bytes]):
+    """A fake callable that records the text chunks it receives, in order."""
+    received: list[str] = []
+
+    def _call(text_iter):
+        for text in text_iter:
+            received.append(text)
+            yield from audio_chunks
+
+    _call.received = received  # type: ignore[attr-defined]
+    return _call
+
+
+async def test_tts_provider_defers_synthesis_until_first_chunk():
+    """Regression test: the TTS connection must not open until the first text
+    chunk is available, so a slow LLM (time-to-first-token > 20s) doesn't
+    trigger ElevenLabs' idle timeout.
+    """
+    call_started = asyncio.Event()
+
+    def _tts_callable(text_iter):
+        call_started.set()
+        for _text in text_iter:
+            yield b"audio"
+
+    provider = ElevenLabsTTSProvider(_tts_settings(), _tts_callable=_tts_callable)
+
+    async def _delayed_chunks() -> AsyncIterator[str]:
+        # Simulate a slow LLM: hold the first chunk back for a moment.
+        await asyncio.sleep(0.05)
+        yield "first"
+        yield "second"
+
+    assert not call_started.is_set(), "TTS callable invoked before first chunk"
+    audio = [b async for b in provider.stream(_delayed_chunks())]
+    assert audio == [b"audio", b"audio"]
+    assert call_started.is_set(), "TTS callable was never invoked"

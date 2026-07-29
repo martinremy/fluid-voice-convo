@@ -49,6 +49,66 @@ Open the URL Vite prints (e.g. `http://localhost:5173`), click **Start**, and
 speak — partial transcripts appear dimmed and update live; committed turns
 append as new lines when you pause.
 
+### Tailscale
+
+By default Vite binds to `localhost`, so the frontend is only reachable from
+the same machine. To expose it to other devices on your tailnet, leave Vite on
+localhost and proxy it through Tailscale Serve, which terminates TLS and gives
+you a secure-context HTTPS URL (required for `getUserMedia` / microphone
+access from a non-localhost address).
+
+#### Prerequisite: enable Serve in the tailnet ACL
+
+`tailscale serve --https` needs permission to provision TLS certificates. If
+you get "Serve is not enabled on your tailnet," the tailnet admin must add a
+`nodeAttrs` grant in the Tailscale admin console (Access Controls):
+
+```json
+"nodeAttrs": [
+  {
+    "target": ["autogroup:member"],
+    "attr":   ["funnel"]
+  }
+]
+```
+
+The `funnel` attribute enables HTTPS cert provisioning for both tailnet-only
+Serve and public Funnel — there is no separate serve-only attribute.
+
+#### Expose the frontend over HTTPS
+
+```bash
+# Terminal 2 — Vite frontend (still on localhost)
+cd web && npm install && npm run dev
+
+# Terminal 3 — expose it over HTTPS via Tailscale
+# (you may need sudo depending on how Tailscale was installed)
+sudo tailscale serve --bg --https 8080 http://localhost:5173
+```
+
+Tailscale prints a URL like `https://<machine>.<tailnet>.ts.net:8080`.
+You can then access the web UI at `https://yourhost.tailexyz1.ts.net:8080`.
+Open that from any device on the tailnet. The browser sees a trusted HTTPS
+context, so microphone access works without warnings.
+
+To stop the proxy:
+
+```bash
+sudo tailscale serve --https=5173 off
+```
+
+#### Allow the Tailscale hostname in Vite
+
+Add the Tailscale MagicDNS hostname to `server.allowedHosts` in
+`web/vite.config.ts` so Vite accepts requests proxied through the
+Tailscale hostname. In the `server` section, set:
+
+```js
+allowedHosts: ["yourhost.tailexyz1.ts.net"],
+```
+
+Then restart the Vite dev server so the updated config is applied.
+
 ### Run the STT demo (Phase 2)
 
 The live transcript requires an ElevenLabs API key.

@@ -74,7 +74,17 @@ class ElevenLabsTTSProvider:
         text_queue: asyncio.Queue[str | None] = asyncio.Queue()
         audio_queue: asyncio.Queue[bytes | None | Exception] = asyncio.Queue()
 
+        # Wait for the first text chunk before opening the TTS connection.
+        # ElevenLabs' convert_realtime has a 20-second idle timeout: if the
+        # LLM's time-to-first-token exceeds that, an eagerly-opened TTS
+        # stream would be terminated before any text arrives.
+        try:
+            first_chunk = await anext(text_chunks)
+        except StopAsyncIteration:
+            return  # no text — nothing to synthesize
+
         def _sync_text_iter() -> Iterator[str]:
+            yield first_chunk
             while True:
                 future = asyncio.run_coroutine_threadsafe(text_queue.get(), loop)
                 item = future.result()
